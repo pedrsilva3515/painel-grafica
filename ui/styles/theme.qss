@@ -164,6 +164,10 @@ QWidget#kanbanToolbar { background-color: #1A1813; border-bottom: 1px solid #2A2
 
 QScrollArea#kanbanBoardScroll, QWidget#kanbanBoard { background-color: #0F0F0D; border: none; }
 
+QSplitter#kanbanSplitter { background-color: #0F0F0D; }
+QSplitter#kanbanSplitter::handle { background-color: #2A2620; width: 4px; }
+QSplitter#kanbanSplitter::handle:hover { background-color: #E8873A; }
+
 QWidget#kanbanColumnWidget, QWidget#kanbanColumn {
     background-color: #1A1813;
     border-radius: 8px;

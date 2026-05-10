@@ -8,7 +8,8 @@ from PyQt6.QtGui import QDrag, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QDateTimeEdit, QDialog, QFormLayout, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMessageBox, QPushButton, QScrollArea, QTextEdit, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QScrollArea, QSplitter, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 import modules.kanban.board as board
@@ -582,39 +583,40 @@ class KanbanWidget(QWidget):
         columns       = board.get_columns()
         orders_by_col = board.get_orders_by_column()
 
-        board_widget = QWidget()
-        board_widget.setObjectName("kanbanBoard")
-        row = QHBoxLayout(board_widget)
-        row.setSpacing(8)
-        row.setContentsMargins(12, 12, 12, 12)
+        saved_sizes = (
+            self._splitter.sizes()
+            if hasattr(self, "_splitter") and self._splitter.count() == len(columns)
+            else []
+        )
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setObjectName("kanbanSplitter")
+        splitter.setContentsMargins(12, 12, 12, 12)
 
         for col in columns:
             col_widget = KanbanColumn(col, orders_by_col.get(col, []), columns)
             col_widget.setObjectName("kanbanColumn")
-            col_widget.setMinimumWidth(210)
-            col_widget.setMaximumWidth(250)
+            col_widget.setMinimumWidth(180)
             col_widget.card_moved.connect(self._on_card_moved)
             col_widget.card_deleted.connect(lambda _: self.refresh())
             col_widget.refresh_needed.connect(self.refresh)
-            row.addWidget(col_widget)
+            splitter.addWidget(col_widget)
 
-        row.addStretch()
-        self._board_widget = board_widget
-        self._board_scroll.setWidget(board_widget)
+        if saved_sizes:
+            splitter.setSizes(saved_sizes)
+
+        self._splitter = splitter
+        self._board_scroll.setWidget(splitter)
 
         current_filter = self._filter_input.text() if hasattr(self, "_filter_input") else ""
         if current_filter:
             self._on_filter_changed(current_filter)
 
     def _on_filter_changed(self, text: str):
-        if not hasattr(self, "_board_widget"):
+        if not hasattr(self, "_splitter"):
             return
-        layout = self._board_widget.layout()
-        for i in range(layout.count()):
-            item = layout.itemAt(i)
-            if not item:
-                continue
-            widget = item.widget()
+        for i in range(self._splitter.count()):
+            widget = self._splitter.widget(i)
             if isinstance(widget, KanbanColumn):
                 widget.apply_filter(text)
 
