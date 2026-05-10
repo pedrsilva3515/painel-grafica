@@ -1,0 +1,41 @@
+{
+  "hotkey": "ctrl+space",
+  "session_hours": 8,
+  "monitored_folders": [],
+  "startup_enabled": false,
+  "daily_panel": {
+    "enabled": true,
+    "time": "08:00",
+    "auto_close_minutes": 30
+  },
+  "preview": {
+    "enabled": true,
+    "max_size_mb": 50,
+    "show_for_extensions": ["png", "jpg", "jpeg", "pdf", "bmp"]
+  },
+  "kanban": {
+    "columns": [
+      "Entrada",
+      "Arte Final",
+      "Aguardando Aprovação",
+      "Produção",
+      "Acabamento",
+      "Pronto",
+      "Entregue"
+    ],
+    "alert_thresholds_hours": {
+      "Arte Final": 4,
+      "Produção": 8
+    },
+    "todoist_token": ""
+  },
+  "calculator_templates": [
+    {
+      "nome": "Área m²",
+      "prefixo": "m2",
+      "formula": "(largura * altura) / 10000 * quantidade",
+      "unidades": "cm",
+      "output": "{resultado:.2f} m² — {quantidade} peças"
+    }
+  ]
+}
