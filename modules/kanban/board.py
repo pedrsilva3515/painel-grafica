@@ -32,7 +32,7 @@ def get_orders_by_column() -> dict[str, list[dict]]:
                    c.name AS client_name
             FROM   orders o
             LEFT JOIN clients c ON c.id = o.client_id
-            ORDER  BY o.created_at DESC
+            ORDER  BY o.position ASC
             """
         ).fetchall()
 
@@ -84,6 +84,14 @@ def add_order(
         return order_id
 
 
+def update_order_title(order_id: int, new_title: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE orders SET title = ? WHERE id = ?",
+            (new_title, order_id),
+        )
+
+
 def update_order(order_id: int, **kwargs) -> None:
     allowed = {"title", "os_number", "deadline", "value", "notes", "status"}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
@@ -97,11 +105,25 @@ def update_order(order_id: int, **kwargs) -> None:
         )
 
 
+def reorder_cards(order_ids: list[int]) -> None:
+    """Persist card positions within a column from the list order (index = position)."""
+    with get_connection() as conn:
+        for pos, oid in enumerate(order_ids):
+            conn.execute(
+                "UPDATE orders SET position = ? WHERE id = ?", (pos, oid)
+            )
+
+
 def move_order(order_id: int, new_status: str) -> None:
     with get_connection() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM orders WHERE status = ?",
+            (new_status,),
+        ).fetchone()
+        next_pos = row["next_pos"] if row else 0
         conn.execute(
-            "UPDATE orders SET status = ?, last_moved_at = ? WHERE id = ?",
-            (new_status, time.time(), order_id),
+            "UPDATE orders SET status = ?, last_moved_at = ?, position = ? WHERE id = ?",
+            (new_status, time.time(), next_pos, order_id),
         )
 
 

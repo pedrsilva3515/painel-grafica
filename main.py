@@ -239,6 +239,21 @@ def main() -> None:
 
     cdr_watcher.order_created.connect(_on_cdr_order_created)
 
+    def _on_cdr_order_renamed(old_title: str, new_title: str, _order_id: int):
+        tray.show_notification(
+            "O.S. renomeada automaticamente",
+            f'"{old_title}" → "{new_title}" atualizado no Kanban.',
+        )
+        if main_win.isVisible():
+            main_win.centralWidget().widget(0).refresh()
+
+    cdr_watcher.order_renamed.connect(_on_cdr_order_renamed)
+
+    # ── Reminder manager ──────────────────────────────────────────────────────
+    from modules.reminders.manager import ReminderManager
+    reminder_manager = ReminderManager()
+    reminder_manager.reminder_triggered.connect(tray.show_notification)
+
     # ── File indexer ──────────────────────────────────────────────────────────
     _start_indexer(tray)
 

@@ -165,6 +165,23 @@ class SettingsDialog(QDialog):
         layout.setSpacing(14)
         layout.setContentsMargins(16, 16, 16, 16)
 
+        # Columns management
+        grp_cols = QGroupBox("Colunas do Kanban")
+        grp_cols.setObjectName("settingsGroup")
+        grp_cols_layout = QVBoxLayout(grp_cols)
+
+        cols_info = QLabel("Adicione, renomeie, reordene ou exclua colunas do quadro Kanban.")
+        cols_info.setObjectName("settingsInfo")
+        cols_info.setWordWrap(True)
+        grp_cols_layout.addWidget(cols_info)
+
+        manage_btn = QPushButton("⚙️  Gerenciar Colunas…")
+        manage_btn.setObjectName("primaryBtn")
+        manage_btn.clicked.connect(self._on_manage_columns)
+        grp_cols_layout.addWidget(manage_btn)
+
+        layout.addWidget(grp_cols)
+
         grp = QGroupBox("Inserção Automática de O.S. via CorelDRAW (.cdr)")
         grp.setObjectName("settingsGroup")
         grp_layout = QVBoxLayout(grp)
@@ -195,6 +212,46 @@ class SettingsDialog(QDialog):
 
         grp_layout.addLayout(row)
         layout.addWidget(grp)
+
+        # Print folders
+        grp_print = QGroupBox("Pastas de Impressão")
+        grp_print.setObjectName("settingsGroup")
+        grp_print_layout = QFormLayout(grp_print)
+        grp_print_layout.setSpacing(8)
+        grp_print_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self._print_folder_inputs: dict[str, QLineEdit] = {}
+        for material, obj_name in [
+            ("Adesivo", "printFolderAdesivo"),
+            ("Lona",    "printFolderLona"),
+            ("Papel",   "printFolderPapel"),
+        ]:
+            field = QLineEdit()
+            field.setObjectName(obj_name)
+            field.setReadOnly(True)
+            field.setPlaceholderText("Nenhuma pasta configurada")
+            self._print_folder_inputs[material] = field
+
+            row_w = QWidget()
+            row_h = QHBoxLayout(row_w)
+            row_h.setContentsMargins(0, 0, 0, 0)
+            row_h.addWidget(field)
+
+            browse = QPushButton("Escolher…")
+            browse.clicked.connect(
+                lambda _checked, m=material: self._on_browse_print_folder(m)
+            )
+            row_h.addWidget(browse)
+
+            clear = QPushButton("Limpar")
+            clear.clicked.connect(
+                lambda _checked, m=material: self._print_folder_inputs[m].clear()
+            )
+            row_h.addWidget(clear)
+
+            grp_print_layout.addRow(f"{material}:", row_w)
+
+        layout.addWidget(grp_print)
 
         # Alert thresholds (read-only info for now)
         grp2 = QGroupBox("Alertas de Pedido Parado")
@@ -267,6 +324,11 @@ class SettingsDialog(QDialog):
         # Kanban / CDR
         self._cdr_folder_input.setText(d.get("cdr_watch_folder", ""))
 
+        # Print folders
+        pf = d.get("print_folders", {})
+        for material, field in self._print_folder_inputs.items():
+            field.setText(pf.get(material, ""))
+
         # Preview
         pv = d.get("preview", {})
         self._preview_enabled.setChecked(pv.get("enabled", True))
@@ -290,6 +352,17 @@ class SettingsDialog(QDialog):
         row = self._folder_list.currentRow()
         if row >= 0:
             self._folder_list.takeItem(row)
+
+    def _on_manage_columns(self):
+        from ui.kanban_columns_dialog import KanbanColumnsDialog
+        KanbanColumnsDialog(self).exec()
+
+    def _on_browse_print_folder(self, material: str):
+        folder = QFileDialog.getExistingDirectory(
+            self, f"Selecionar pasta de impressão — {material}", ""
+        )
+        if folder:
+            self._print_folder_inputs[material].setText(folder)
 
     def _on_browse_cdr(self):
         folder = QFileDialog.getExistingDirectory(
@@ -330,6 +403,10 @@ class SettingsDialog(QDialog):
         ]
 
         d["cdr_watch_folder"] = self._cdr_folder_input.text().strip()
+
+        d.setdefault("print_folders", {})
+        for material, field in self._print_folder_inputs.items():
+            d["print_folders"][material] = field.text().strip()
 
         d.setdefault("preview", {})
         d["preview"]["enabled"]    = self._preview_enabled.isChecked()

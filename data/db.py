@@ -60,3 +60,16 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_orders_status  ON orders(status);
             CREATE INDEX IF NOT EXISTS idx_reminders_at   ON reminders(trigger_at);
         """)
+
+        # Non-destructive migration: add position column to existing databases
+        try:
+            conn.execute(
+                "ALTER TABLE orders ADD COLUMN position INTEGER NOT NULL DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+        # Seed position from rowid for any rows still at 0
+        conn.execute(
+            "UPDATE orders SET position = rowid WHERE position = 0"
+        )

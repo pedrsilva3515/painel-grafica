@@ -1,7 +1,10 @@
 {
   "hotkey": "ctrl+space",
   "session_hours": 8,
-  "monitored_folders": [],
+  "monitored_folders": [
+    "C:/Users/adsa8/Downloads",
+    "C:/Users/adsa8/Pictures"
+  ],
   "startup_enabled": false,
   "daily_panel": {
     "enabled": true,
@@ -11,16 +14,22 @@
   "preview": {
     "enabled": true,
     "max_size_mb": 50,
-    "show_for_extensions": ["png", "jpg", "jpeg", "pdf", "bmp"]
+    "show_for_extensions": [
+      "png",
+      "jpg",
+      "jpeg",
+      "pdf",
+      "bmp",
+      "cdr"
+    ]
   },
   "kanban": {
     "columns": [
-      "Entrada",
-      "Arte Final",
+      "Pedido",
       "Aguardando Aprovação",
       "Produção",
       "Acabamento",
-      "Pronto",
+      "Expedição",
       "Entregue"
     ],
     "alert_thresholds_hours": {
@@ -29,13 +38,27 @@
     },
     "todoist_token": ""
   },
+  "mubisys_url_template": "https://www.google.com/search?q=OS+{os_number}+mubisys",
   "calculator_templates": [
     {
       "nome": "Área m²",
       "prefixo": "m2",
       "formula": "(largura * altura) / 10000 * quantidade",
       "unidades": "cm",
-      "output": "{resultado:.2f} m² — {quantidade} peças"
+      "output": "{resultado:.2f} m² — {quantidade:.0f} peças"
+    },
+    {
+      "nome": "Metro linear",
+      "prefixo": "ml",
+      "formula": "comprimento / 100 * quantidade",
+      "unidades": "cm",
+      "output": "{resultado:.2f} m lineares — {quantidade:.0f} peças"
     }
-  ]
+  ],
+  "cdr_watch_folder": "C:/Users/adsa8/Downloads",
+  "print_folders": {
+    "Adesivo": "C:/Users/adsa8/Pictures/Adesivo",
+    "Lona": "C:/Users/adsa8/Pictures/Lona",
+    "Papel": "C:/Users/adsa8/Pictures/Papel"
+  }
 }

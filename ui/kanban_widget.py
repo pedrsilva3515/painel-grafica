@@ -1,14 +1,15 @@
 import time
 from datetime import datetime
 
-from PyQt6.QtCore import QMimeData, QPoint, Qt, pyqtSignal
+import os
+
+from PyQt6.QtCore import QDateTime, QMimeData, QPoint, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QDrag, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QDateTimeEdit, QDialog, QFormLayout, QFrame,
-    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QScrollArea, QTextEdit, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMessageBox, QPushButton, QScrollArea, QTextEdit, QVBoxLayout, QWidget,
 )
-from PyQt6.QtCore import QDateTime
 
 import modules.kanban.board as board
 
@@ -26,27 +27,65 @@ def _deadline_status(deadline: float | None) -> str:
     return "ok"
 
 
+# ── Clickable thumbnail label ─────────────────────────────────────────────────
+
+class _ClickableLabel(QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._filepath = ""
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_filepath(self, path: str):
+        self._filepath = path
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._filepath:
+            try:
+                os.startfile(self._filepath)
+            except Exception:
+                pass
+        super().mousePressEvent(event)
+
+
 # ── Detail dialog ──────────────────────────────────────────────────────────────
 
 class OrderDetailDialog(QDialog):
     def __init__(self, order: dict, parent=None):
         super().__init__(parent)
-        self._order = order
+        self._order           = order
+        self._thumb_worker    = None
+        self._current_filepath = ""
         self.setWindowTitle("Novo Pedido" if not order.get("id") else "Editar Pedido")
         self.setModal(True)
-        self.setFixedWidth(440)
         self._build_ui()
 
+        if order.get("id"):
+            self.setFixedWidth(900)
+            os_num = order.get("os_number", "").strip()
+            if os_num:
+                self._load_file_list(os_num)
+            else:
+                self._show_empty_list()
+        else:
+            self._preview_panel.setVisible(False)
+            self.setFixedWidth(460)
+
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(22, 22, 22, 22)
+        root = QHBoxLayout(self)
+        root.setSpacing(0)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        # ── Left: form ────────────────────────────────────────────────────────
+        form_widget = QWidget()
+        left = QVBoxLayout(form_widget)
+        left.setSpacing(12)
+        left.setContentsMargins(22, 22, 22, 22)
 
         form = QFormLayout()
         form.setSpacing(8)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        self._title  = QLineEdit(self._order.get("title", ""))
+        self._title = QLineEdit(self._order.get("title", ""))
         self._title.setPlaceholderText("Nome do trabalho *")
         form.addRow("Título:", self._title)
 
@@ -81,7 +120,7 @@ class OrderDetailDialog(QDialog):
         self._notes.setPlaceholderText("Observações...")
         form.addRow("Notas:", self._notes)
 
-        layout.addLayout(form)
+        left.addLayout(form)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -92,7 +131,95 @@ class OrderDetailDialog(QDialog):
         save.setObjectName("authPrimaryBtn")
         save.clicked.connect(self._on_save)
         btn_row.addWidget(save)
-        layout.addLayout(btn_row)
+        left.addLayout(btn_row)
+        left.addStretch()
+
+        root.addWidget(form_widget, stretch=1)
+
+        # ── Right: preview panel ──────────────────────────────────────────────
+        preview_panel = self._preview_panel = QFrame()
+        preview_panel.setObjectName("orderPreviewPanel")
+        preview_panel.setFixedWidth(380)
+        pv = QVBoxLayout(preview_panel)
+        pv.setSpacing(8)
+        pv.setContentsMargins(12, 12, 12, 12)
+
+        self._thumb_label = _ClickableLabel()
+        self._thumb_label.setObjectName("orderPreviewThumb")
+        self._thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._thumb_label.setMinimumHeight(260)
+        self._thumb_label.setScaledContents(False)
+        self._thumb_label.setText("Sem preview")
+        pv.addWidget(self._thumb_label)
+
+        self._file_list = QListWidget()
+        self._file_list.setObjectName("orderFileList")
+        self._file_list.setMinimumHeight(120)
+        self._file_list.currentItemChanged.connect(self._on_file_selected)
+        pv.addWidget(self._file_list)
+
+        root.addWidget(preview_panel)
+
+    def _show_empty_list(self):
+        item = QListWidgetItem("Nenhum arquivo exportado")
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        self._file_list.addItem(item)
+
+    def _load_file_list(self, os_number: str):
+        from modules.kanban.print_folder_scanner import find_exported_files
+        self._exported_files = find_exported_files(os_number)
+
+        if not self._exported_files:
+            self._show_empty_list()
+            return
+
+        for f in self._exported_files:
+            item = QListWidgetItem(f"{f['filename']}\n{f['material']}  ·  {f['status']}")
+            item.setData(Qt.ItemDataRole.UserRole, f["filepath"])
+            self._file_list.addItem(item)
+
+        self._file_list.setCurrentRow(0)
+
+    def _on_file_selected(self, current: QListWidgetItem, _previous):
+        if current is None:
+            return
+        filepath = current.data(Qt.ItemDataRole.UserRole)
+        if filepath:
+            self._load_thumb(filepath)
+
+    def _load_thumb(self, filepath: str):
+        self._cancel_worker()
+        self._thumb_label.setText("Carregando…")
+        self._thumb_label.set_filepath("")
+        self._current_filepath = filepath
+
+        from modules.preview.renderer import ThumbnailWorker
+        self._thumb_worker = ThumbnailWorker(filepath, self)
+        self._thumb_worker.ready.connect(self._on_thumb_ready)
+        self._thumb_worker.start()
+
+    def _cancel_worker(self):
+        if self._thumb_worker and self._thumb_worker.isRunning():
+            self._thumb_worker.ready.disconnect()
+            self._thumb_worker.quit()
+            self._thumb_worker.wait(500)
+        self._thumb_worker = None
+
+    def _on_thumb_ready(self, path: str, pixmap):
+        if path != self._current_filepath:
+            return
+        self._thumb_label.setPixmap(
+            pixmap.scaled(
+                360, 260,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        self._thumb_label.set_filepath(path)
+
+    def closeEvent(self, event):
+        self._cancel_worker()
+        super().closeEvent(event)
 
     def _on_save(self):
         if not self._title.text().strip():
@@ -127,8 +254,8 @@ class OrderCard(QFrame):
 
     def __init__(self, order: dict, columns: list[str], parent=None):
         super().__init__(parent)
-        self._order   = order
-        self._columns = columns
+        self._order      = order
+        self._columns    = columns
         self._drag_start: QPoint | None = None
 
         self.setObjectName("kanbanCard")
@@ -172,8 +299,12 @@ class OrderCard(QFrame):
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
+        was_click = self._drag_start is not None  # True → no drag occurred
         self._drag_start = None
         self.setCursor(Qt.CursorShape.OpenHandCursor)
+        if was_click and event.button() == Qt.MouseButton.LeftButton:
+            QTimer.singleShot(0, self._on_edit)
+            return
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -188,7 +319,6 @@ class OrderCard(QFrame):
         mime.setData(self._MIME_TYPE, str(self._order["id"]).encode())
         drag.setMimeData(mime)
 
-        # Snapshot of the card as drag pixmap
         px = self.grab().scaled(
             self.width(), self.height(),
             Qt.AspectRatioMode.KeepAspectRatio,
@@ -200,7 +330,7 @@ class OrderCard(QFrame):
         self._drag_start = None
         drag.exec(Qt.DropAction.MoveAction)
 
-    # ── Context menu / double-click ────────────────────────────────────────────
+    # ── Context menu ──────────────────────────────────────────────────────────
 
     def contextMenuEvent(self, event):
         from PyQt6.QtWidgets import QMenu
@@ -216,9 +346,6 @@ class OrderCard(QFrame):
         menu.addAction("Editar").triggered.connect(self._on_edit)
         menu.addAction("Excluir").triggered.connect(self._on_delete)
         menu.exec(event.globalPos())
-
-    def mouseDoubleClickEvent(self, _event):
-        self._on_edit()
 
     def _on_edit(self):
         dlg = OrderDetailDialog(self._order, self.window())
@@ -257,10 +384,48 @@ class _DropScroll(QScrollArea):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
-        if event.mimeData().hasFormat(OrderCard._MIME_TYPE):
-            order_id = int(event.mimeData().data(OrderCard._MIME_TYPE).data())
+        if not event.mimeData().hasFormat(OrderCard._MIME_TYPE):
+            return
+        order_id = int(event.mimeData().data(OrderCard._MIME_TYPE).data())
+
+        container = self.widget()
+        layout    = container.layout()
+
+        # Collect all OrderCard widgets currently in this column
+        cards = [
+            layout.itemAt(i).widget()
+            for i in range(layout.count())
+            if layout.itemAt(i) and isinstance(layout.itemAt(i).widget(), OrderCard)
+        ]
+        dragged = next((c for c in cards if c._order["id"] == order_id), None)
+
+        if dragged is not None:
+            # ── Same-column reorder ───────────────────────────────────────────
+            drop_y = (
+                event.position().y()
+                + self.verticalScrollBar().value()
+            )
+
+            others = [c for c in cards if c is not dragged]
+            insert_at = len(others)
+            for i, card in enumerate(others):
+                if drop_y < card.y() + card.height() // 2:
+                    insert_at = i
+                    break
+
+            new_order = others[:insert_at] + [dragged] + others[insert_at:]
+
+            for card in new_order:
+                layout.removeWidget(card)
+            for card in new_order:
+                layout.addWidget(card)
+
+            board.reorder_cards([c._order["id"] for c in new_order])
+        else:
+            # ── Cross-column drop ─────────────────────────────────────────────
             self.card_dropped.emit(order_id)
-            event.acceptProposedAction()
+
+        event.acceptProposedAction()
 
 
 # ── Column ─────────────────────────────────────────────────────────────────────
@@ -272,8 +437,9 @@ class KanbanColumn(QWidget):
 
     def __init__(self, name: str, orders: list[dict], columns: list[str], parent=None):
         super().__init__(parent)
-        self._name    = name
-        self._columns = columns
+        self._name         = name
+        self._columns      = columns
+        self._total_orders = len(orders)
         self.setObjectName("kanbanColumnWidget")
         self.setAcceptDrops(True)
         self._build_ui(orders)
@@ -283,10 +449,10 @@ class KanbanColumn(QWidget):
         layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        header = QLabel(f"{self._name}  ({len(orders)})")
-        header.setObjectName("kanbanColumnHeader")
-        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(header)
+        self._header = QLabel(f"{self._name}  ({len(orders)})")
+        self._header.setObjectName("kanbanColumnHeader")
+        self._header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._header)
 
         scroll = _DropScroll()
         scroll.setWidgetResizable(True)
@@ -314,6 +480,34 @@ class KanbanColumn(QWidget):
         card.delete_requested.connect(self.card_deleted)
         card.refresh_requested.connect(self.refresh_needed)
         self._cards_layout.addWidget(card)
+
+    def apply_filter(self, text: str):
+        text = text.strip().lower()
+        visible = 0
+        for i in range(self._cards_layout.count()):
+            item = self._cards_layout.itemAt(i)
+            if not item:
+                continue
+            card = item.widget()
+            if not isinstance(card, OrderCard):
+                continue
+            order = card._order
+            if not text:
+                card.setVisible(True)
+                visible += 1
+            else:
+                fields = " ".join(filter(None, [
+                    order.get("title", ""),
+                    order.get("os_number", ""),
+                    order.get("client_name", ""),
+                    order.get("notes", ""),
+                ])).lower()
+                matches = text in fields
+                card.setVisible(matches)
+                if matches:
+                    visible += 1
+        count = visible if text else self._total_orders
+        self._header.setText(f"{self._name}  ({count})")
 
     # Also accept drops on the column header / margins
     def dragEnterEvent(self, event):
@@ -352,10 +546,22 @@ class KanbanWidget(QWidget):
         tb.addWidget(title)
         tb.addStretch()
 
+        self._filter_input = QLineEdit()
+        self._filter_input.setObjectName("kanbanFilter")
+        self._filter_input.setPlaceholderText("Filtrar pedidos…")
+        self._filter_input.setMaximumWidth(220)
+        self._filter_input.textChanged.connect(self._on_filter_changed)
+        tb.addWidget(self._filter_input)
+
         add_btn = QPushButton("+ Novo Pedido")
         add_btn.setObjectName("primaryBtn")
         add_btn.clicked.connect(self._on_add)
         tb.addWidget(add_btn)
+
+        cols_btn = QPushButton("⚙️ Colunas")
+        cols_btn.setToolTip("Adicionar, renomear e reordenar colunas")
+        cols_btn.clicked.connect(self._on_manage_columns)
+        tb.addWidget(cols_btn)
 
         refresh_btn = QPushButton("↻")
         refresh_btn.setToolTip("Atualizar")
@@ -393,11 +599,34 @@ class KanbanWidget(QWidget):
             row.addWidget(col_widget)
 
         row.addStretch()
+        self._board_widget = board_widget
         self._board_scroll.setWidget(board_widget)
+
+        current_filter = self._filter_input.text() if hasattr(self, "_filter_input") else ""
+        if current_filter:
+            self._on_filter_changed(current_filter)
+
+    def _on_filter_changed(self, text: str):
+        if not hasattr(self, "_board_widget"):
+            return
+        layout = self._board_widget.layout()
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if not item:
+                continue
+            widget = item.widget()
+            if isinstance(widget, KanbanColumn):
+                widget.apply_filter(text)
 
     def _on_card_moved(self, order_id: int, new_status: str):
         board.move_order(order_id, new_status)
         self.refresh()
+
+    def _on_manage_columns(self):
+        from ui.kanban_columns_dialog import KanbanColumnsDialog
+        dlg = KanbanColumnsDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.refresh()
 
     def _on_add(self):
         dlg = OrderDetailDialog({}, self)

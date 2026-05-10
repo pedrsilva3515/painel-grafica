@@ -12,6 +12,11 @@ from PyQt6.QtWidgets import (
 )
 
 from modules.command_palette.actions.file_search import search_files
+from modules.command_palette.actions.app_search import search_apps
+from modules.command_palette.actions.calculator import calculate, list_templates
+from modules.command_palette.actions.client_search import search_clients, copy_whatsapp
+from modules.command_palette.actions.mubisys import open_os
+from modules.reminders.manager import add_reminder, parse_reminder
 from modules.preview.renderer import ThumbnailWorker
 
 _GWL_EXSTYLE      = -20
@@ -63,8 +68,6 @@ class CommandPalette(QWidget):
         self._debounce.setInterval(150)
         self._debounce.timeout.connect(self._do_search)
 
-        # Polls isActiveWindow() every 50 ms — closes palette when focus leaves.
-        # Only starts 250 ms after show() to skip activation noise from SetWindowLongW.
         self._focus_timer = QTimer(self)
         self._focus_timer.setInterval(50)
         self._focus_timer.timeout.connect(self._check_focus)
@@ -98,7 +101,7 @@ class CommandPalette(QWidget):
         self._search = QLineEdit()
         self._search.setObjectName("paletteSearch")
         self._search.setPlaceholderText(
-            "Buscar arquivo · @cliente · =cálculo · os:1042 · !lembrete · ou nome de ação"
+            "Buscar arquivo ou app · @cliente · =cálculo · os:1042 · !lembrete 14h"
         )
         self._search.textChanged.connect(self._debounce.start)
         self._search.installEventFilter(self)
@@ -171,7 +174,6 @@ class CommandPalette(QWidget):
             pass
 
     def _force_foreground(self):
-        """Use AttachThreadInput so SetForegroundWindow works even from background."""
         try:
             hwnd      = int(self.winId())
             u32       = ctypes.windll.user32
@@ -234,20 +236,35 @@ class CommandPalette(QWidget):
             self._populate_actions("")
             return
 
+        # ── Prefixo @ → busca de clientes ────────────────────────────────────
         if query.startswith("@"):
-            self._add_stub(f"Busca de cliente '{query[1:]}' — Fase 3")
+            self._search_clients(query[1:].strip())
+
+        # ── Prefixo = → calculadora ───────────────────────────────────────────
         elif query.startswith("="):
-            self._add_stub(f"Calculadora '{query[1:]}' — Fase 3")
+            self._run_calculator(query[1:].strip())
+
+        # ── Prefixo os: → abrir OS no Mubisys ────────────────────────────────
         elif q_lower.startswith("os:"):
-            self._add_stub(f"Abrir OS {query[3:]} no Mubisys — Fase 3")
+            os_num = query[3:].strip()
+            item = QListWidgetItem(f"🔗  Abrir OS {os_num} no Mubisys\n    Pressione Enter para abrir no browser")
+            item.setData(Qt.ItemDataRole.UserRole, {"_mubisys": os_num})
+            self._results.addItem(item)
+
+        # ── Prefixo ! → criar lembrete ────────────────────────────────────────
         elif query.startswith("!"):
-            self._add_stub(f"Lembrete: {query[1:]} — Fase 3")
+            self._preview_reminder(query[1:].strip())
+
+        # ── Busca geral: ações + apps + arquivos ──────────────────────────────
         else:
             self._populate_actions(q_lower)
+            self._search_apps(query)
             self._search_files(query)
 
         if self._results.count():
             self._results.setCurrentRow(0)
+
+    # ── Ações ─────────────────────────────────────────────────────────────────
 
     def _populate_actions(self, filter_text: str):
         for action in _ACTIONS:
@@ -262,15 +279,78 @@ class CommandPalette(QWidget):
         if self._results.count():
             self._results.setCurrentRow(0)
 
-    def _add_stub(self, msg: str):
-        self._results.addItem(QListWidgetItem(msg))
+    # ── Apps ─────────────────────────────────────────────────────────────────
+
+    def _search_apps(self, query: str):
+        for app in search_apps(query):
+            folder = f" — {app['folder']}" if app.get("folder") else ""
+            item = QListWidgetItem(f"🖥️  {app['name']}\n    Aplicativo{folder}")
+            item.setData(Qt.ItemDataRole.UserRole, {"_app": True, "lnk_path": app["lnk_path"], "name": app["name"]})
+            self._results.addItem(item)
+
+    # ── Calculadora ───────────────────────────────────────────────────────────
+
+    def _run_calculator(self, expr: str):
+        if not expr:
+            for t in list_templates():
+                item = QListWidgetItem(f"🧮  ={t['prefixo']} …\n    {t['nome']}")
+                item.setData(Qt.ItemDataRole.UserRole, {"_stub": True})
+                self._results.addItem(item)
+            return
+
+        result = calculate(expr)
+        if result is None:
+            self._results.addItem(QListWidgetItem("⚠️  Prefixo não encontrado. Templates disponíveis em ⚙️ Configurações."))
+            return
+
+        copied_note = "  ✓ copiado" if result.get("copied") else ""
+        item = QListWidgetItem(f"🧮  {result['result_text']}{copied_note}\n    {result['label']}")
+        item.setData(Qt.ItemDataRole.UserRole, {"_calc_result": result["result_text"]})
+        self._results.addItem(item)
+
+    # ── Clientes ──────────────────────────────────────────────────────────────
+
+    def _search_clients(self, query: str):
+        if not query:
+            self._results.addItem(QListWidgetItem("💡  Digite @nome para buscar clientes"))
+            return
+        clients = search_clients(query)
+        if not clients:
+            self._results.addItem(QListWidgetItem(f"Nenhum cliente encontrado para '{query}'"))
+            return
+        for c in clients:
+            orders_info = f"{c['order_count']} pedido(s)" if c["order_count"] else "sem pedidos"
+            last = f" · Último: {c['last_order_title']} [{c['last_order_status']}]" if c.get("last_order_title") else ""
+            whats = f" · 📱 {c['whatsapp']}" if c.get("whatsapp") else ""
+            item = QListWidgetItem(f"👤  {c['name']}{whats}\n    {orders_info}{last}")
+            item.setData(Qt.ItemDataRole.UserRole, {"_client": True, "client_id": c["id"], "whatsapp": c.get("whatsapp", ""), "name": c["name"]})
+            self._results.addItem(item)
+
+    # ── Lembrete ──────────────────────────────────────────────────────────────
+
+    def _preview_reminder(self, raw: str):
+        if not raw:
+            self._results.addItem(QListWidgetItem("💡  !texto 14h  ·  !texto amanhã 9h  ·  !texto em 30min"))
+            return
+        parsed = parse_reminder(raw)
+        if parsed:
+            text, trigger_at = parsed
+            dt = datetime.fromtimestamp(trigger_at).strftime("%d/%m %H:%M")
+            item = QListWidgetItem(f"📌  {text}\n    Lembrete para {dt} — Enter para salvar")
+            item.setData(Qt.ItemDataRole.UserRole, {"_reminder": True, "text": text, "trigger_at": trigger_at})
+        else:
+            item = QListWidgetItem(f"📌  {raw}\n    ⚠️ Horário não reconhecido — tente '14h', 'amanhã 9h' ou 'em 30min'")
+            item.setData(Qt.ItemDataRole.UserRole, {"_stub": True})
+        self._results.addItem(item)
+
+    # ── Arquivos ──────────────────────────────────────────────────────────────
 
     def _search_files(self, query: str):
         results = search_files(query)
         if not results and self._results.count() == 0:
             self._results.addItem(
                 QListWidgetItem(
-                    "Nenhum arquivo encontrado.\n"
+                    "Nenhum resultado encontrado.\n"
                     "Dica: configure as pastas em ⚙️ Configurações."
                 )
             )
@@ -294,7 +374,7 @@ class CommandPalette(QWidget):
         if not current:
             return
         data = current.data(Qt.ItemDataRole.UserRole)
-        if not isinstance(data, dict) or "_action" in data or not data.get("filepath"):
+        if not isinstance(data, dict) or not data.get("filepath"):
             return
 
         self._preview_name.setText(data.get("filename", ""))
@@ -344,18 +424,49 @@ class CommandPalette(QWidget):
         data = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(data, dict):
             return
+
+        # Ação interna (kanban, prazos, etc.)
         if "_action" in data:
             self.close_palette()
             self.action_triggered.emit(data["_action"])
-        elif data.get("filepath"):
-            self._open_file(data["filepath"])
 
-    def _open_file(self, filepath: str):
-        try:
-            os.startfile(filepath)
-        except Exception:
-            pass
-        self.close_palette()
+        # Abrir arquivo
+        elif data.get("filepath"):
+            try:
+                os.startfile(data["filepath"])
+            except Exception:
+                pass
+            self.close_palette()
+
+        # Abrir aplicativo
+        elif data.get("_app"):
+            try:
+                os.startfile(data["lnk_path"])
+            except Exception:
+                pass
+            self.close_palette()
+
+        # Mubisys
+        elif data.get("_mubisys"):
+            open_os(data["_mubisys"])
+            self.close_palette()
+
+        # Lembrete
+        elif data.get("_reminder"):
+            add_reminder(data["text"], data["trigger_at"])
+            self.close_palette()
+
+        # Cliente — copiar WhatsApp se disponível
+        elif data.get("_client"):
+            wa = data.get("whatsapp", "")
+            if wa:
+                QApplication.clipboard().setText(wa)
+            self.close_palette()
+
+        # Resultado de cálculo — copiar
+        elif data.get("_calc_result"):
+            QApplication.clipboard().setText(data["_calc_result"])
+            self.close_palette()
 
     def _open_folder(self, filepath: str):
         try:
