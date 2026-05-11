@@ -130,3 +130,19 @@ def move_order(order_id: int, new_status: str) -> None:
 def delete_order(order_id: int) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+
+
+def get_wip_limits() -> dict[str, int]:
+    try:
+        settings = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return settings.get("kanban", {}).get("wip_limits", {})
+    except Exception:
+        return {}
+
+
+def get_auto_refresh_minutes() -> int:
+    try:
+        settings = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return int(settings.get("kanban", {}).get("auto_refresh_minutes", 5))
+    except Exception:
+        return 5

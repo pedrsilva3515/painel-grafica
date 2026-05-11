@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 
 import modules.kanban.board as board
+import modules.kanban.alerts as alerts
 
 
 def _deadline_status(deadline: float | None) -> str:
@@ -253,10 +254,11 @@ class OrderCard(QFrame):
 
     _MIME_TYPE = "application/x-kanban-order-id"
 
-    def __init__(self, order: dict, columns: list[str], parent=None):
+    def __init__(self, order: dict, columns: list[str], stale_hours: float | None = None, parent=None):
         super().__init__(parent)
-        self._order      = order
-        self._columns    = columns
+        self._order       = order
+        self._columns     = columns
+        self._stale_hours = stale_hours
         self._drag_start: QPoint | None = None
 
         self.setObjectName("kanbanCard")
@@ -290,6 +292,11 @@ class OrderCard(QFrame):
             dl = QLabel(f"⏰ {dt_str}")
             dl.setObjectName(f"cardDeadline_{status}")
             layout.addWidget(dl)
+
+        if self._stale_hours is not None:
+            stale_lbl = QLabel(f"⚠ {self._stale_hours:.0f}h parado")
+            stale_lbl.setObjectName("cardStaleLabel")
+            layout.addWidget(stale_lbl)
 
     # ── Drag ──────────────────────────────────────────────────────────────────
 
@@ -436,23 +443,44 @@ class KanbanColumn(QWidget):
     card_deleted   = pyqtSignal(int)
     refresh_needed = pyqtSignal()
 
-    def __init__(self, name: str, orders: list[dict], columns: list[str], parent=None):
+    def __init__(self, name: str, orders: list[dict], columns: list[str],
+                 stale_ids: dict[int, float] | None = None,
+                 wip_limit: int | None = None, parent=None):
         super().__init__(parent)
         self._name         = name
         self._columns      = columns
         self._total_orders = len(orders)
+        self._stale_ids    = stale_ids or {}
+        self._wip_limit    = wip_limit
         self.setObjectName("kanbanColumnWidget")
         self.setAcceptDrops(True)
         self._build_ui(orders)
+
+    def _header_text(self, count: int) -> str:
+        if self._wip_limit:
+            return f"{self._name}  ({count} / {self._wip_limit})"
+        return f"{self._name}  ({count})"
+
+    def _apply_wip_style(self, count: int):
+        if not self._wip_limit:
+            self._header.setStyleSheet("")
+            return
+        if count > self._wip_limit:
+            self._header.setStyleSheet("color: #D97560; font-weight: bold;")
+        elif count == self._wip_limit:
+            self._header.setStyleSheet("color: #D18960;")
+        else:
+            self._header.setStyleSheet("")
 
     def _build_ui(self, orders: list[dict]):
         layout = QVBoxLayout(self)
         layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self._header = QLabel(f"{self._name}  ({len(orders)})")
+        self._header = QLabel(self._header_text(len(orders)))
         self._header.setObjectName("kanbanColumnHeader")
         self._header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._apply_wip_style(len(orders))
         layout.addWidget(self._header)
 
         scroll = _DropScroll()
@@ -476,7 +504,8 @@ class KanbanColumn(QWidget):
         layout.addWidget(scroll)
 
     def _add_card(self, order: dict):
-        card = OrderCard(order, self._columns, self)
+        stale_hours = self._stale_ids.get(order["id"])
+        card = OrderCard(order, self._columns, stale_hours, self)
         card.move_requested.connect(self.card_moved)
         card.delete_requested.connect(self.card_deleted)
         card.refresh_requested.connect(self.refresh_needed)
@@ -508,7 +537,8 @@ class KanbanColumn(QWidget):
                 if matches:
                     visible += 1
         count = visible if text else self._total_orders
-        self._header.setText(f"{self._name}  ({count})")
+        self._header.setText(self._header_text(count))
+        self._apply_wip_style(count)
 
     # Also accept drops on the column header / margins
     def dragEnterEvent(self, event):
@@ -577,11 +607,23 @@ class KanbanWidget(QWidget):
         self._board_scroll.setObjectName("kanbanBoardScroll")
         layout.addWidget(self._board_scroll)
 
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self.refresh)
+        self._restart_timer()
+
         self.refresh()
+
+    def _restart_timer(self):
+        interval_ms = board.get_auto_refresh_minutes() * 60 * 1000
+        self._refresh_timer.start(interval_ms)
 
     def refresh(self):
         columns       = board.get_columns()
         orders_by_col = board.get_orders_by_column()
+        wip_limits    = board.get_wip_limits()
+
+        stale_list = alerts.get_stale_orders()
+        stale_ids  = {o["id"]: o["hours_stuck"] for o in stale_list}
 
         saved_sizes = (
             self._splitter.sizes()
@@ -594,7 +636,11 @@ class KanbanWidget(QWidget):
         splitter.setContentsMargins(12, 12, 12, 12)
 
         for col in columns:
-            col_widget = KanbanColumn(col, orders_by_col.get(col, []), columns)
+            col_widget = KanbanColumn(
+                col, orders_by_col.get(col, []), columns,
+                stale_ids=stale_ids,
+                wip_limit=wip_limits.get(col),
+            )
             col_widget.setObjectName("kanbanColumn")
             col_widget.setMinimumWidth(180)
             col_widget.card_moved.connect(self._on_card_moved)
@@ -621,6 +667,21 @@ class KanbanWidget(QWidget):
                 widget.apply_filter(text)
 
     def _on_card_moved(self, order_id: int, new_status: str):
+        wip_limits = board.get_wip_limits()
+        if new_status in wip_limits:
+            orders_by_col = board.get_orders_by_column()
+            current_count = len(orders_by_col.get(new_status, []))
+            limit = wip_limits[new_status]
+            if current_count >= limit:
+                reply = QMessageBox.question(
+                    self, "Limite WIP atingido",
+                    f"A coluna \"{new_status}\" já tem {current_count} card(s) "
+                    f"(limite configurado: {limit}).\nDeseja mover mesmo assim?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if reply == QMessageBox.StandardButton.No:
+                    self.refresh()
+                    return
         board.move_order(order_id, new_status)
         self.refresh()
 

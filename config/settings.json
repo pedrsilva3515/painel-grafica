@@ -36,6 +36,11 @@
       "Arte Final": 4,
       "Produção": 8
     },
+    "wip_limits": {
+      "Produção": 5,
+      "Acabamento": 3
+    },
+    "auto_refresh_minutes": 5,
     "todoist_token": ""
   },
   "mubisys_url_template": "https://www.google.com/search?q=OS+{os_number}+mubisys",
