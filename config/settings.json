@@ -43,6 +43,15 @@
     "auto_refresh_minutes": 5,
     "todoist_token": ""
   },
+  "notifications": {
+    "prazos_criticos":      true,
+    "cdr_nova_os":          true,
+    "cdr_os_renomeada":     true,
+    "indice_atualizado":    false,
+    "app_pronto":           true,
+    "configuracoes_salvas": false,
+    "lembretes":            true
+  },
   "mubisys_url_template": "https://www.google.com/search?q=OS+{os_number}+mubisys",
   "calculator_templates": [
     {

@@ -56,10 +56,11 @@ class SettingsDialog(QDialog):
         self._tabs.setObjectName("settingsTabs")
         layout.addWidget(self._tabs)
 
-        self._tabs.addTab(self._tab_geral(),   "⚙️  Geral")
-        self._tabs.addTab(self._tab_pastas(),  "📁  Pastas Monitoradas")
-        self._tabs.addTab(self._tab_kanban(),  "📋  Kanban / CDR")
-        self._tabs.addTab(self._tab_preview(), "🖼️  Preview")
+        self._tabs.addTab(self._tab_geral(),          "⚙️  Geral")
+        self._tabs.addTab(self._tab_pastas(),         "📁  Pastas Monitoradas")
+        self._tabs.addTab(self._tab_kanban(),         "📋  Kanban / CDR")
+        self._tabs.addTab(self._tab_preview(),        "🖼️  Preview")
+        self._tabs.addTab(self._tab_notifications(),  "🔔  Notificações")
 
         # OK / Cancel
         btns = QDialogButtonBox(
@@ -269,6 +270,57 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         return w
 
+    # ── Tab: Notificações ─────────────────────────────────────────────────────
+
+    def _tab_notifications(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setSpacing(14)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        desc = QLabel(
+            "Escolha quais notificações de bandeja (popup do sistema) deseja receber.\n"
+            "Confirmações de ação e erros críticos são sempre exibidos."
+        )
+        desc.setObjectName("settingsInfo")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        self._notif_checks: dict[str, QCheckBox] = {}
+
+        def _group(title: str, items: list[tuple[str, str]]) -> QGroupBox:
+            grp = QGroupBox(title)
+            grp.setObjectName("settingsGroup")
+            grp_layout = QVBoxLayout(grp)
+            grp_layout.setSpacing(6)
+            for key, label in items:
+                cb = QCheckBox(label)
+                self._notif_checks[key] = cb
+                grp_layout.addWidget(cb)
+            return grp
+
+        layout.addWidget(_group("Prazos e Alertas", [
+            ("prazos_criticos", "Prazos críticos (< 24h) — verificado a cada 30 min"),
+        ]))
+
+        layout.addWidget(_group("Kanban / CDR", [
+            ("cdr_nova_os",      "Nova O.S. criada automaticamente via .cdr"),
+            ("cdr_os_renomeada", "O.S. renomeada automaticamente via .cdr"),
+        ]))
+
+        layout.addWidget(_group("Sistema", [
+            ("indice_atualizado",    "Reindexação de pastas concluída (a cada 15 min)"),
+            ("app_pronto",           "Aplicativo iniciado e pronto"),
+            ("configuracoes_salvas", "Configurações salvas com sucesso"),
+        ]))
+
+        layout.addWidget(_group("Lembretes", [
+            ("lembretes", "Lembretes agendados pelo usuário"),
+        ]))
+
+        layout.addStretch()
+        return w
+
     # ── Tab: Preview ──────────────────────────────────────────────────────────
 
     def _tab_preview(self) -> QWidget:
@@ -333,6 +385,12 @@ class SettingsDialog(QDialog):
         pv = d.get("preview", {})
         self._preview_enabled.setChecked(pv.get("enabled", True))
         self._preview_max_mb.setValue(pv.get("max_size_mb", 50))
+
+        # Notifications
+        from core.notifications import DEFAULTS as _NOTIF_DEFAULTS
+        notif = d.get("notifications", {})
+        for key, cb in self._notif_checks.items():
+            cb.setChecked(notif.get(key, _NOTIF_DEFAULTS.get(key, True)))
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
@@ -411,6 +469,10 @@ class SettingsDialog(QDialog):
         d.setdefault("preview", {})
         d["preview"]["enabled"]    = self._preview_enabled.isChecked()
         d["preview"]["max_size_mb"] = self._preview_max_mb.value()
+
+        d.setdefault("notifications", {})
+        for key, cb in self._notif_checks.items():
+            d["notifications"][key] = cb.isChecked()
 
         _save(d)
         self.saved.emit()

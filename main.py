@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from core.auth import SetPasswordDialog, run_auth
 from core.tray import TrayManager
 from core.startup import toggle_startup
+from core.notifications import is_enabled as _notif_on
 from data.db import init_db
 
 SETTINGS_FILE = ROOT / "config" / "settings.json"
@@ -64,7 +65,7 @@ def _run_indexer(tray: TrayManager) -> None:
     _indexer_worker = FileIndexWorker(folders)
     _indexer_worker.finished.connect(
         lambda n: tray.show_notification("Índice atualizado", f"{n} arquivos indexados.")
-        if n > 0 else None
+        if n > 0 and _notif_on("indice_atualizado") else None
     )
     _indexer_worker.start()
 
@@ -153,7 +154,8 @@ def main() -> None:
         _run_indexer(tray)
         # Update CDR watcher
         cdr_watcher.set_folder(_load_settings().get("cdr_watch_folder", ""))
-        tray.show_notification("Configurações salvas", "As alterações foram aplicadas.")
+        if _notif_on("configuracoes_salvas"):
+            tray.show_notification("Configurações salvas", "As alterações foram aplicadas.")
 
     settings_dlg.saved.connect(_on_settings_saved)
 
@@ -200,7 +202,10 @@ def main() -> None:
     from modules.deadlines.monitor import DeadlineMonitor
     deadline_monitor = DeadlineMonitor()
     deadline_monitor.status_changed.connect(tray.set_status)
-    deadline_monitor.alert_triggered.connect(tray.show_notification)
+    deadline_monitor.alert_triggered.connect(
+        lambda title, msg, crit=False: tray.show_notification(title, msg, crit)
+        if _notif_on("prazos_criticos") else None
+    )
     deadline_monitor.scan()
 
     # ── Daily panel ───────────────────────────────────────────────────────────
@@ -229,10 +234,11 @@ def main() -> None:
         cdr_watcher.set_folder(cdr_folder)
 
     def _on_cdr_order_created(title: str, order_id: int):
-        tray.show_notification(
-            "Nova O.S. criada automaticamente",
-            f'"{title}" adicionada no Kanban.',
-        )
+        if _notif_on("cdr_nova_os"):
+            tray.show_notification(
+                "Nova O.S. criada automaticamente",
+                f'"{title}" adicionada no Kanban.',
+            )
         # Refresh kanban if it's open
         if main_win.isVisible():
             main_win.centralWidget().widget(0).refresh()
@@ -240,10 +246,11 @@ def main() -> None:
     cdr_watcher.order_created.connect(_on_cdr_order_created)
 
     def _on_cdr_order_renamed(old_title: str, new_title: str, _order_id: int):
-        tray.show_notification(
-            "O.S. renomeada automaticamente",
-            f'"{old_title}" → "{new_title}" atualizado no Kanban.',
-        )
+        if _notif_on("cdr_os_renomeada"):
+            tray.show_notification(
+                "O.S. renomeada automaticamente",
+                f'"{old_title}" → "{new_title}" atualizado no Kanban.',
+            )
         if main_win.isVisible():
             main_win.centralWidget().widget(0).refresh()
 
@@ -252,7 +259,10 @@ def main() -> None:
     # ── Reminder manager ──────────────────────────────────────────────────────
     from modules.reminders.manager import ReminderManager
     reminder_manager = ReminderManager()
-    reminder_manager.reminder_triggered.connect(tray.show_notification)
+    reminder_manager.reminder_triggered.connect(
+        lambda title, msg: tray.show_notification(title, msg)
+        if _notif_on("lembretes") else None
+    )
 
     # ── File indexer ──────────────────────────────────────────────────────────
     _start_indexer(tray)
@@ -262,10 +272,11 @@ def main() -> None:
     if hotkey_manager:
         app.aboutToQuit.connect(hotkey_manager.stop)
 
-    tray.show_notification(
-        "Painel Gráfica",
-        "Pronto. Use Ctrl+Space para o Command Palette.",
-    )
+    if _notif_on("app_pronto"):
+        tray.show_notification(
+            "Painel Gráfica",
+            "Pronto. Use Ctrl+Space para o Command Palette.",
+        )
 
     sys.exit(app.exec())
 
